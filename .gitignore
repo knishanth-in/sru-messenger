@@ -1,0 +1,6 @@
+_pycache_/
+*.pyc
+instance/
+database.db
+chat.db
+.env
