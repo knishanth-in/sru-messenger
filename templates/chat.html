@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chat</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      display: flex;
+      height: 100vh;
+      background: #e5ddd5;
+    }
+
+    /* Sidebar */
+    #users {
+      width: 250px;
+      background: #075e54;
+      color: white;
+      display: flex;
+      flex-direction: column;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+    #users h4 {
+      margin: 0 0 10px 0;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.3);
+    }
+    .user {
+      padding: 10px;
+      margin-bottom: 5px;
+      border-radius: 5px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+    .user:hover {
+      background: rgba(255,255,255,0.2);
+    }
+    .online-dot {
+      width: 10px;
+      height: 10px;
+      background: green;
+      border-radius: 50%;
+    }
+    .offline-dot {
+      width: 10px;
+      height: 10px;
+      background: gray;
+      border-radius: 50%;
+    }
+
+    /* Chat area */
+    #chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #ece5dd;
+    }
+    #chatHeader {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px;
+      background: #128c7e;
+      color: white;
+      font-weight: bold;
+      font-size: 18px;
+    }
+    #messages {
+      flex: 1;
+      padding: 10px;
+      list-style: none;
+      margin: 0;
+      overflow-y: auto;
+    }
+    li {
+      padding: 8px 12px;
+      margin-bottom: 5px;
+      border-radius: 10px;
+      max-width: 70%;
+      word-wrap: break-word;
+    }
+    .sent {
+      background: #dcf8c6;
+      margin-left: auto;
+      text-align: right;
+    }
+    .received {
+      background: white;
+      margin-right: auto;
+      text-align: left;
+    }
+
+    #typing {
+      font-size: 12px;
+      color: gray;
+      padding: 0 10px;
+      min-height: 18px;
+    }
+
+    /* Input box */
+    #inputArea {
+      display: flex;
+      padding: 10px;
+      background: #f0f0f0;
+      border-top: 1px solid #ccc;
+    }
+    #message {
+      flex: 1;
+      padding: 10px;
+      border-radius: 20px;
+      border: 1px solid #ccc;
+      outline: none;
+    }
+    #sendBtn {
+      padding: 10px 20px;
+      margin-left: 10px;
+      background: #128c7e;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+    }
+    #sendBtn:hover {
+      background: #075e54;
+    }
+
+    /* Logout button */
+    #logoutBtn {
+      background: #e74c3c;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+      color: white;
+      font-size: 14px;
+    }
+    #logoutBtn:hover {
+      background: #c0392b;
+    }
+  </style>
+</head>
+<body>
+
+<!-- USERS LIST -->
+<div id="users">
+  <h4>Contacts</h4>
+  {% for u in users %}
+    {% if u.username != user %}
+      <div class="user" onclick="selectUser('{{ u.username }}')">
+        <span>{{ u.username }}</span>
+        <span class="status-dot offline-dot"></span>
+      </div>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<!-- CHAT AREA -->
+<div id="chat">
+  <div id="chatHeader">
+    <span id="chatWith">Public Chat</span>
+    <form action="/logout" method="get" style="margin:0;">
+      <button type="submit" id="logoutBtn">Logout</button>
+    </form>
+  </div>
+  <div id="typing"></div>
+  <ul id="messages"></ul>
+
+  <div id="inputArea">
+    <input id="message" placeholder="Type a message..." autocomplete="off">
+    <button id="sendBtn" onclick="sendMessage()">Send</button>
+  </div>
+</div>
+
+<script>
+  const socket = io();
+  const currentUser = "{{ user }}";
+  let selectedUser = null;
+
+  // ---------------- SELECT USER ----------------
+  function selectUser(username) {
+    selectedUser = username;
+    document.getElementById("chatWith").innerText = "Chat with " + username;
+    document.getElementById("messages").innerHTML = "";
+    document.getElementById("typing").innerText = "";
+
+    socket.emit("join_private", { user: username });
+
+    fetch(`/private_messages/${username}`)
+      .then(res => res.json())
+      .then(data => {
+        data.forEach(m => {
+          addMessage(m.sender, m.message, m.time);
+        });
+        scrollToBottom();
+      });
+  }
+
+  // ---------------- SEND MESSAGE ----------------
+  function sendMessage() {
+    const input = document.getElementById("message");
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    if (selectedUser) {
+      socket.emit("private_message", {
+        receiver: selectedUser,
+        message: msg
+      });
+    } else {
+      socket.send(msg);
+    }
+
+    input.value = "";
+  }
+
+  // ---------------- RECEIVE MESSAGES ----------------
+  socket.on("message", data => {
+    if (!selectedUser) addMessage(data.sender, data.message, data.time);
+    scrollToBottom();
+  });
+
+  socket.on("private_message", data => {
+    if (selectedUser === data.sender || selectedUser === data.receiver) {
+      addMessage(data.sender, data.message, data.time);
+      scrollToBottom();
+    }
+  });
+
+  function addMessage(sender, message, time) {
+    const li = document.createElement("li");
+    li.textContent = message + " (" + time + ")";
+    if (sender === currentUser) {
+      li.classList.add("sent");
+    } else {
+      li.classList.add("received");
+    }
+    document.getElementById("messages").appendChild(li);
+  }
+
+  function scrollToBottom() {
+    const messages = document.getElementById("messages");
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  // ---------------- TYPING INDICATOR ----------------
+  document.getElementById("message").addEventListener("input", () => {
+    if (selectedUser) {
+      socket.emit("typing", { receiver: selectedUser });
+    }
+  });
+
+  socket.on("typing", data => {
+    document.getElementById("typing").innerText = data.sender + " is typing...";
+    setTimeout(() => {
+      document.getElementById("typing").innerText = "";
+    }, 1000);
+  });
+
+  // ---------------- ACTIVE USERS ----------------
+  socket.on("active_users", users => {
+    document.querySelectorAll(".user").forEach(u => {
+      const name = u.querySelector("span").innerText;
+      const dot = u.querySelector(".status-dot");
+      if (users.includes(name)) {
+        dot.classList.remove("offline-dot");
+        dot.classList.add("online-dot");
+      } else {
+        dot.classList.remove("online-dot");
+        dot.classList.add("offline-dot");
+      }
+    });
+  });
+</script>
+
+</body>
+</html>
